@@ -130,3 +130,24 @@ def get_attendance_list(role="employee", day=None):
     data = cursor.fetchall()
     conn.close()
     return data
+
+
+def get_days(month_prefix=None):
+    """Return the distinct dates (YYYY-MM-DD) that have attendance.
+
+    Pass month_prefix like '2026-07' to limit to one month.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if month_prefix:
+        cursor.execute(_q("""
+            SELECT DISTINCT day FROM employee_attendance
+            WHERE day LIKE ? ORDER BY day
+        """), (month_prefix + "%",))
+    else:
+        cursor.execute("SELECT DISTINCT day FROM employee_attendance ORDER BY day")
+
+    days = [r[0] for r in cursor.fetchall() if r[0]]
+    conn.close()
+    return days

@@ -9,7 +9,7 @@ from wifi_guard import is_on_office_wifi, get_client_ip, OFFICE_NETWORKS_RAW
 import schedule
 import time
 import threading
-from export_excel import export_today_data
+from export_excel import export_today_data, export_month
 from backup_db import backup_database
 
 
@@ -20,8 +20,9 @@ BACKUP_TIME = os.environ.get("BACKUP_TIME", "18:05")
 
 # ---------------- Scheduler ----------------
 def run_scheduler():
-    # Write a full copy of the day's sheet at the configured time every day.
-    schedule.every().day.at(EXPORT_TIME).do(export_today_data)
+    # After office hours every day, refresh the month's workbook
+    # (Summary tab + one tab per day).
+    schedule.every().day.at(EXPORT_TIME).do(export_month)
     # Take a safe backup copy of the database every day.
     schedule.every().day.at(BACKUP_TIME).do(backup_database)
 
@@ -173,10 +174,21 @@ def admin():
 # ---------------- Download Excel (Admin) ----------------
 @app.route("/download-excel")
 def download_excel():
+    """Download today's single-day sheet."""
     if not session.get("admin"):
         return redirect(url_for("admin_login"))
 
     excel_path = export_today_data()
+    return send_file(excel_path, as_attachment=True)
+
+
+@app.route("/download-month")
+def download_month():
+    """Download the whole month's workbook (Summary + one tab per day)."""
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+
+    excel_path = export_month()
     return send_file(excel_path, as_attachment=True)
 
 
@@ -211,9 +223,10 @@ def mark_attendance_api():
     result = mark_attendance(user_id, "employee", lat, lon, address, client_ip)
 
     if result == "SUCCESS":
-        # Keep today's Excel sheet up to date after every mark.
+        # Keep the Excel reports up to date after every mark.
         try:
             export_today_data()
+            export_month()
         except Exception as e:
             print("Excel export failed:", e)
         return jsonify({"message": "Attendance marked successfully"}), 200

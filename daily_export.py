@@ -18,8 +18,11 @@ Automatic run every day at 6:05 PM (Windows Task Scheduler, one-time setup):
        even if the web app is closed.
 """
 
-from export_excel import export_today_data
+from export_excel import export_today_data, export_month
 
 if __name__ == "__main__":
-    path = export_today_data()
-    print(f"Done. Today's attendance saved to:\n{path}")
+    day_path = export_today_data()
+    month_path = export_month()
+    print("Done.")
+    print(f"Today's sheet : {day_path}")
+    print(f"Month workbook: {month_path}")
