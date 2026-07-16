@@ -3,8 +3,9 @@ from pathlib import Path
 import sqlite3
 from datetime import date
 
+from database import DB_PATH  # single shared DB location
+
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "your_database.db"
 REPORTS_DIR = BASE_DIR / "attendance_reports"
 
 

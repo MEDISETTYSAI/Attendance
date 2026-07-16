@@ -1,0 +1,12 @@
+# Attendance data must NOT live in git (would be overwritten on pull)
+*.db
+backups/
+attendance_reports/
+*.xlsx
+
+# Python / env
+__pycache__/
+*.pyc
+venv/
+libs/
+.python-version

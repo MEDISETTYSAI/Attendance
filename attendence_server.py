@@ -10,16 +10,20 @@ import schedule
 import time
 import threading
 from export_excel import export_today_data
+from backup_db import backup_database
 
 
-# Time of day (24h "HH:MM") for the automatic daily Excel export.
+# Time of day (24h "HH:MM") for the automatic daily Excel export / DB backup.
 EXPORT_TIME = os.environ.get("EXPORT_TIME", "18:00")
+BACKUP_TIME = os.environ.get("BACKUP_TIME", "18:05")
 
 
 # ---------------- Scheduler ----------------
 def run_scheduler():
     # Write a full copy of the day's sheet at the configured time every day.
     schedule.every().day.at(EXPORT_TIME).do(export_today_data)
+    # Take a safe backup copy of the database every day.
+    schedule.every().day.at(BACKUP_TIME).do(backup_database)
 
     while True:
         schedule.run_pending()
@@ -225,6 +229,12 @@ def mark_attendance_api():
 
 # ---------------- Run Server ----------------
 if __name__ == "__main__":
+    # Take one backup right away so a copy always exists, then run on schedule.
+    try:
+        backup_database()
+    except Exception as e:
+        print("Startup backup failed:", e)
+
     scheduler_thread = threading.Thread(target=run_scheduler)
     scheduler_thread.daemon = True
     scheduler_thread.start()

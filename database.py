@@ -4,7 +4,14 @@ from datetime import datetime, date
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "your_database.db"
+
+# Where the single attendance database lives.
+#   Default  -> your_database.db next to the code (one laptop only).
+#   Shared   -> set ATTENDANCE_DB to a OneDrive / shared-network folder so
+#               EVERY laptop that runs the app reads & writes the SAME file,
+#               e.g.  ATTENDANCE_DB=C:\Users\yuva\OneDrive\OfficeAttendance\your_database.db
+DB_PATH = Path(os.environ.get("ATTENDANCE_DB", BASE_DIR / "your_database.db"))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # One-device-per-day rule.
 #   On-premise (each device has its own private LAN IP) -> safe to enable ("1").
