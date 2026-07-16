@@ -1,41 +1,49 @@
 import os
 import re
-import socket
 from datetime import date
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-from database import get_attendance_list, mark_attendance
 
-# -------------------------------------------------
-# APP SETUP
-# -------------------------------------------------
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+
+from database import get_attendance_list, mark_attendance
+from wifi_guard import is_on_office_wifi, get_client_ip, OFFICE_NETWORKS_RAW
+import schedule
+import time
+import threading
+from export_excel import export_today_data
+
+
+# ---------------- Scheduler ----------------
+def run_scheduler():
+    schedule.every().day.at("13:00").do(export_today_data)
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+
+# ---------------- Flask Setup ----------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "CHANGE_ME_TO_RANDOM_SECRET")
 
-# -------------------------------------------------
-# OFFICE SETTINGS
-# -------------------------------------------------
-OFFICE_NAME = "BIXBI"
-ROLL_REGEX = rf"^{OFFICE_NAME}-[A-Za-z0-9]{{1,15}}$"
+# Company / office short-code used inside every employee ID.
+OFFICE_NAME = os.environ.get("OFFICE_NAME", "BIXBI")
+# Employee ID format, e.g. "BIXBI-EMP001"
+EMP_ID_REGEX = rf"^{OFFICE_NAME}-[A-Za-z0-9]{{1,15}}$"
 
-# -------------------------------------------------
-# STAFF LOGIN CREDENTIALS
-# -------------------------------------------------
-STAFF_USERS = {
-    "BIXBI": "BIXBI-123"
+# Admin accounts that can view the attendance dashboard.
+ADMIN_USERS = {
+    os.environ.get("ADMIN_USER", "BIXBI"): os.environ.get("ADMIN_PASSWORD", "BIXBI-123")
 }
 
-ALLOW_MULTIPLE_STUDENTS_PER_SYSTEM = True
 
-# -------------------------------------------------
-# HOME PAGE
-# -------------------------------------------------
+# ---------------- Home ----------------
 @app.route("/")
 def home():
     return """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>MakeMyTechnology</title>
+        <title>Office Attendance</title>
         <style>
             body {
                 margin: 0;
@@ -63,126 +71,142 @@ def home():
     <body>
         <div class="container">
             <h1>MAKE<span style="color:red">MY</span>TECHNOLOGY</h1>
-            <a href="/dashboard">Go to Dashboard</a>
+            <a href="/employees">Mark / View Attendance</a>
         </div>
     </body>
     </html>
     """
 
-# -------------------------------------------------
-# DASHBOARD
-# -------------------------------------------------
-@app.route("/dashboard")
-def dashboard():
-    return render_template("dashboard.html")
 
-# -------------------------------------------------
-# STUDENT DASHBOARD
-# -------------------------------------------------
-@app.route("/students")
-def students():
+# ---------------- Whoami (setup helper) ----------------
+@app.route("/whoami")
+def whoami():
+    """
+    Open this URL on a device connected to the office Wi-Fi to discover the IP
+    the server sees. Copy that IP into the OFFICE_NETWORKS env var to whitelist
+    your office. Also tells you whether you are currently recognised as office.
+    """
+    allowed, client_ip = is_on_office_wifi(request)
+    return jsonify({
+        "your_ip": client_ip,
+        "on_office_wifi": allowed,
+        "whitelisted_networks": OFFICE_NETWORKS_RAW,
+        "hint": "Add 'your_ip' to the OFFICE_NETWORKS setting to allow this network."
+    })
+
+
+# ---------------- Employee Dashboard ----------------
+@app.route("/employees")
+def employees():
     day = request.args.get("date")
     if not day:
         day = date.today().isoformat()
 
-    attendance = get_attendance_list("student", day)
+    attendance = get_attendance_list("employee", day)
 
     return render_template(
         "attendance_html.html",
         attendance=attendance,
-        role="student",
-        title="Student Attendance",
+        role="employee",
+        title="Employee Attendance",
         selected_date=day
     )
 
-# -------------------------------------------------
-# STAFF LOGIN
-# -------------------------------------------------
-@app.route("/staff-login", methods=["GET", "POST"])
-def staff_login():
+
+# Keep the old /students URL working -> redirect to /employees
+@app.route("/students")
+def students_redirect():
+    return redirect(url_for("employees", **request.args))
+
+
+# ---------------- Admin Login ----------------
+@app.route("/admin-login", methods=["GET", "POST"])
+def admin_login():
     if request.method == "POST":
         login_id = request.form.get("login_id")
         password = request.form.get("password")
 
-        if STAFF_USERS.get(login_id) == password:
-            session["staff"] = True
-            session["staff_user"] = login_id
-            return redirect(url_for("staff"))
+        if ADMIN_USERS.get(login_id) == password:
+            session["admin"] = True
+            session["admin_user"] = login_id
+            return redirect(url_for("admin"))
 
-        return "Invalid Staff Login ID or Password", 403
+        return "Invalid Admin Login ID or Password", 403
 
     return render_template("staff_html.html")
 
-# -------------------------------------------------
-# STAFF LOGOUT
-# -------------------------------------------------
-@app.route("/staff-logout")
-def staff_logout():
+
+# ---------------- Admin Logout ----------------
+@app.route("/admin-logout")
+def admin_logout():
     session.clear()
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("employees"))
 
-# -------------------------------------------------
-# STAFF DASHBOARD
-# -------------------------------------------------
-@app.route("/staff")
-def staff():
-    if not session.get("staff"):
-        return redirect(url_for("staff_login"))
 
-    attendance = get_attendance_list("staff")
+# ---------------- Admin Dashboard ----------------
+@app.route("/admin")
+def admin():
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+
+    day = request.args.get("date") or date.today().isoformat()
+    attendance = get_attendance_list("employee", day)
     return render_template(
         "attendance_html.html",
         attendance=attendance,
-        role="staff",
-        title="Staff Attendance"
+        role="employee",
+        title="Employee Attendance (Admin)",
+        selected_date=day
     )
 
-# -------------------------------------------------
-# MARK ATTENDANCE API
-# -------------------------------------------------
+
+# ---------------- Mark Attendance ----------------
 @app.route("/mark-attendance", methods=["POST"])
 def mark_attendance_api():
     data = request.get_json(silent=True) or {}
 
     user_id = data.get("user_id")
-    role = data.get("role")
     lat = data.get("lat")
     lon = data.get("lon")
     address = data.get("address")
 
     if not user_id:
-        return jsonify({"error": "ID is required"}), 400
+        return jsonify({"error": "Employee ID is required"}), 400
 
-    if role == "student":
-        if not re.match(ROLL_REGEX, user_id):
-            return jsonify({"error": "Invalid Student ID format"}), 400
-
-        result = mark_attendance(user_id, role, lat, lon, address)
-
-        if result:
-            return jsonify({"message": "Student attendance marked successfully"}), 200
-
-        return jsonify({"message": "Attendance already marked today"}), 409
-
-    if role == "staff":
-        if not session.get("staff"):
-            return jsonify({"error": "Unauthorized"}), 403
-
-        if not re.match(ROLL_REGEX, user_id):
-            return jsonify({"error": "Invalid Staff ID format"}), 400
-
-        result = mark_attendance(user_id, role)
-
+    if not re.match(EMP_ID_REGEX, user_id):
         return jsonify({
-            "message": "Staff attendance marked successfully"
-            if result else "Attendance already marked today"
-        }), 200
+            "error": f"Invalid Employee ID. Expected format: {OFFICE_NAME}-XXXX"
+        }), 400
 
-    return jsonify({"error": "Invalid role"}), 400
+    # 🔒 Office Wi-Fi check -----------------------------------------------
+    allowed, client_ip = is_on_office_wifi(request)
+    print("Client IP:", client_ip, "| On office Wi-Fi:", allowed)
 
-# -------------------------------------------------
-# CLOUD SERVER START
-# -------------------------------------------------
+    if not allowed:
+        return jsonify({
+            "error": "You must be connected to the OFFICE Wi-Fi to mark attendance"
+        }), 403
+    # ---------------------------------------------------------------------
+
+    result = mark_attendance(user_id, "employee", lat, lon, address, client_ip)
+
+    if result == "SUCCESS":
+        return jsonify({"message": "Attendance marked successfully"}), 200
+
+    elif result == "USER_ALREADY":
+        return jsonify({"message": "You have already marked attendance today"}), 409
+
+    elif result == "IP_BLOCKED":
+        return jsonify({"message": "This device already marked attendance today"}), 403
+
+    return jsonify({"error": "Unknown error"}), 500
+
+
+# ---------------- Run Server ----------------
 if __name__ == "__main__":
+    scheduler_thread = threading.Thread(target=run_scheduler)
+    scheduler_thread.daemon = True
+    scheduler_thread.start()
+
     port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)

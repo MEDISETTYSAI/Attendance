@@ -9,9 +9,9 @@
 <div class="container mt-4">
   <h3 class="text-center mb-4">{{ title }}</h3>
 
-  <!-- ✅ Date filter (works for Students page with /students?date=YYYY-MM-DD) -->
-  {% if role == "student" %}
-  <form class="row g-2 mb-3" method="GET" action="/students">
+  <!-- ✅ Date filter -->
+  {% if role == "employee" %}
+  <form class="row g-2 mb-3" method="GET" action="/employees">
     <div class="col-md-8">
       <input type="date" class="form-control" name="date" value="{{ selected_date }}">
     </div>
@@ -24,7 +24,7 @@
   <!-- Mark attendance input -->
   <div class="row mb-3">
     <div class="col-md-8">
-      <input id="userId" class="form-control" placeholder="Enter ID">
+      <input id="userId" class="form-control" placeholder="Enter Employee ID (e.g. BIXBI-EMP001)">
       <small class="text-muted d-block mt-1">
         Location will be captured automatically when you click "Mark Attendance".
       </small>
@@ -39,7 +39,7 @@
     <thead class="table-dark">
       <tr>
         <th>#</th>
-        <th>User ID</th>
+        <th>Employee ID</th>
         <th>Timestamp</th>
         <th>Latitude</th>
         <th>Longitude</th>

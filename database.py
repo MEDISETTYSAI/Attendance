@@ -1,107 +1,55 @@
+import os
 import sqlite3
 from datetime import datetime, date
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-
-# IMPORTANT: you said your data is in your_database.db
 DB_PATH = BASE_DIR / "your_database.db"
 
+# One-device-per-day rule.
+#   On-premise (each device has its own private LAN IP) -> safe to enable ("1").
+#   Cloud deploy (ALL office devices share the office's single public IP)
+#       -> MUST stay off ("0"), otherwise only the first employee could mark.
+ENFORCE_ONE_PER_IP = os.environ.get("ENFORCE_ONE_PER_IP", "0") == "1"
 
-def _ensure_columns(conn, table):
-    cur = conn.cursor()
-    cur.execute(f"PRAGMA table_info({table})")
-    cols = {row[1] for row in cur.fetchall()}
-
-    if "lat" not in cols:
-        cur.execute(f"ALTER TABLE {table} ADD COLUMN lat REAL")
-    if "lon" not in cols:
-        cur.execute(f"ALTER TABLE {table} ADD COLUMN lon REAL")
-    if "address" not in cols:
-        cur.execute(f"ALTER TABLE {table} ADD COLUMN address TEXT")
-
-    conn.commit()
 
 def get_connection():
-    BASE_DIR.mkdir(parents=True, exist_ok=True)
-
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Main table (already exists in your_database.db with user_id, timestamp)
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS attendance (
+    CREATE TABLE IF NOT EXISTS employee_attendance (
         user_id TEXT,
         timestamp TEXT,
         lat REAL,
         lon REAL,
-        address TEXT
+        address TEXT,
+        ip_address TEXT
     )
     """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS student_attendance (
-        user_id TEXT,
-        timestamp TEXT,
-        lat REAL,
-        lon REAL,
-        address TEXT
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS staff_attendance (
-        user_id TEXT,
-        timestamp TEXT,
-        lat REAL,
-        lon REAL,
-        address TEXT
-    )
-    """)
-
 
     conn.commit()
-    _ensure_columns(conn, "attendance")
-    _ensure_columns(conn, "student_attendance")
-    _ensure_columns(conn, "staff_attendance")
     return conn
 
-def get_attendance_list(role, day=None):
-    conn = get_connection()
-    cursor = conn.cursor()
 
-    where = ""
-    params = ()
-    if day:
-        where = "WHERE DATE(timestamp) = ?"
-        params = (day,)
+def _table_for(role):
+    # Every role currently maps to employees; kept as a hook for future roles.
+    return "employee_attendance"
 
-    if role == "student":
-        cursor.execute(f"""
-            SELECT user_id, timestamp, lat, lon, address FROM attendance {where}
-            UNION ALL
-            SELECT user_id, timestamp, lat, lon, address FROM student_attendance {where}
-            ORDER BY timestamp
-        """, params * 2 if day else ())
-    else:
-        cursor.execute(f"""
-            SELECT user_id, timestamp, lat, lon, address FROM staff_attendance {where}
-            ORDER BY timestamp
-        """, params)
 
-    data = cursor.fetchall()
-    conn.close()
-    return data
-
-def mark_attendance(user_id, role, lat=None, lon=None, address=None):
+# ----------------------------------
+# MARK ATTENDANCE
+# ----------------------------------
+def mark_attendance(user_id, role="employee", lat=None, lon=None, address=None, ip_address=None):
     conn = get_connection()
     cursor = conn.cursor()
 
     today = date.today().isoformat()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    table = "staff_attendance" if role == "staff" else "student_attendance"
+    table = _table_for(role)
 
+    # ❌ Rule 1: Same employee cannot mark twice in one day
     cursor.execute(f"""
         SELECT 1 FROM {table}
         WHERE user_id = ?
@@ -110,13 +58,58 @@ def mark_attendance(user_id, role, lat=None, lon=None, address=None):
 
     if cursor.fetchone():
         conn.close()
-        return False
+        return "USER_ALREADY"
 
+    # ❌ Rule 2 (optional): Same device/IP cannot mark twice in one day.
+    # Disabled by default because a shared office Wi-Fi presents one public IP
+    # for everyone. Enable only when the server runs on the office LAN.
+    if ENFORCE_ONE_PER_IP and ip_address:
+        cursor.execute(f"""
+            SELECT 1 FROM {table}
+            WHERE ip_address = ?
+            AND DATE(timestamp) = ?
+        """, (ip_address, today))
+
+        if cursor.fetchone():
+            conn.close()
+            return "IP_BLOCKED"
+
+    # ✅ Insert attendance
     cursor.execute(f"""
-        INSERT INTO {table} (user_id, timestamp, lat, lon, address)
-        VALUES (?, ?, ?, ?, ?)
-    """, (user_id, now, lat, lon, address))
+        INSERT INTO {table}
+        (user_id, timestamp, lat, lon, address, ip_address)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, now, lat, lon, address, ip_address))
 
     conn.commit()
     conn.close()
-    return True
+
+    return "SUCCESS"
+
+
+# ----------------------------------
+# GET ATTENDANCE
+# ----------------------------------
+def get_attendance_list(role="employee", day=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    table = _table_for(role)
+
+    if day:
+        cursor.execute(f"""
+            SELECT user_id, timestamp, lat, lon, address
+            FROM {table}
+            WHERE DATE(timestamp) = ?
+            ORDER BY timestamp DESC
+        """, (day,))
+    else:
+        cursor.execute(f"""
+            SELECT user_id, timestamp, lat, lon, address
+            FROM {table}
+            ORDER BY timestamp DESC
+        """)
+
+    data = cursor.fetchall()
+    conn.close()
+    return data
