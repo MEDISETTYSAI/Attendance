@@ -9,6 +9,12 @@
 <div class="container mt-4">
   <h3 class="text-center mb-4">{{ title }}</h3>
 
+  {% if show_download %}
+  <div class="text-end mb-3">
+    <a class="btn btn-outline-success" href="/download-excel">⬇ Download Today's Excel</a>
+  </div>
+  {% endif %}
+
   <!-- ✅ Date filter -->
   {% if role == "employee" %}
   <form class="row g-2 mb-3" method="GET" action="/employees">

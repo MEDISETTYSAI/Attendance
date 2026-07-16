@@ -5,12 +5,14 @@ from datetime import date
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "your_database.db"
+REPORTS_DIR = BASE_DIR / "attendance_reports"
 
 
 def export_today_data():
     today = date.today().isoformat()
 
-    EXCEL_PATH = BASE_DIR / f"attendance_{today}.xlsx"
+    REPORTS_DIR.mkdir(exist_ok=True)
+    EXCEL_PATH = REPORTS_DIR / f"attendance_{today}.xlsx"
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -42,4 +44,5 @@ def export_today_data():
     conn.close()
     wb.save(EXCEL_PATH)
 
-    print(f"✅ Daily Excel Exported: {EXCEL_PATH}")
+    print(f"[export] Excel updated: {EXCEL_PATH}")
+    return EXCEL_PATH

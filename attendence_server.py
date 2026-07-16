@@ -2,7 +2,7 @@ import os
 import re
 from datetime import date
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
 
 from database import get_attendance_list, mark_attendance
 from wifi_guard import is_on_office_wifi, get_client_ip, OFFICE_NETWORKS_RAW
@@ -12,9 +12,14 @@ import threading
 from export_excel import export_today_data
 
 
+# Time of day (24h "HH:MM") for the automatic daily Excel export.
+EXPORT_TIME = os.environ.get("EXPORT_TIME", "18:00")
+
+
 # ---------------- Scheduler ----------------
 def run_scheduler():
-    schedule.every().day.at("13:00").do(export_today_data)
+    # Write a full copy of the day's sheet at the configured time every day.
+    schedule.every().day.at(EXPORT_TIME).do(export_today_data)
 
     while True:
         schedule.run_pending()
@@ -156,8 +161,19 @@ def admin():
         attendance=attendance,
         role="employee",
         title="Employee Attendance (Admin)",
-        selected_date=day
+        selected_date=day,
+        show_download=True
     )
+
+
+# ---------------- Download Excel (Admin) ----------------
+@app.route("/download-excel")
+def download_excel():
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+
+    excel_path = export_today_data()
+    return send_file(excel_path, as_attachment=True)
 
 
 # ---------------- Mark Attendance ----------------
@@ -191,6 +207,11 @@ def mark_attendance_api():
     result = mark_attendance(user_id, "employee", lat, lon, address, client_ip)
 
     if result == "SUCCESS":
+        # Keep today's Excel sheet up to date after every mark.
+        try:
+            export_today_data()
+        except Exception as e:
+            print("Excel export failed:", e)
         return jsonify({"message": "Attendance marked successfully"}), 200
 
     elif result == "USER_ALREADY":

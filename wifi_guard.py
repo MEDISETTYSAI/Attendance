@@ -48,9 +48,16 @@ def _parse_networks(raw):
 
 # ---- Configuration (override with environment variables) ------------------
 
-# Comma separated list of office networks. Default is a common private subnet;
-# CHANGE THIS to your office's public IP when deployed on the cloud.
-OFFICE_NETWORKS_RAW = os.environ.get("OFFICE_NETWORKS", "172.21.8.0/22")
+# Comma separated list of office networks.
+#
+# Default = 192.168.1.0/24  -> every device on the office Wi-Fi
+# ("Airtel_kant_9850") gets an IP like 192.168.1.x, so this whitelists the
+# whole office Wi-Fi and blocks mobile-data / other networks.
+#
+# If your router hands out a different range (check /whoami), change it here or
+# set the OFFICE_NETWORKS environment variable. When you deploy to the cloud,
+# set it to your office's PUBLIC IP instead.
+OFFICE_NETWORKS_RAW = os.environ.get("OFFICE_NETWORKS", "192.168.1.0/24")
 OFFICE_NETWORKS = _parse_networks(OFFICE_NETWORKS_RAW)
 
 # When running behind a proxy / load balancer (Render, Nginx, Heroku, ...),
