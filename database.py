@@ -28,7 +28,10 @@ else:
 
 def _connect():
     if USE_POSTGRES:
-        return psycopg2.connect(DATABASE_URL)
+        # Managed Postgres (Supabase/Render) requires SSL. Add it if missing.
+        if "sslmode" in DATABASE_URL:
+            return psycopg2.connect(DATABASE_URL)
+        return psycopg2.connect(DATABASE_URL, sslmode="require")
     return sqlite3.connect(DB_PATH)
 
 

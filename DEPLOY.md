@@ -4,22 +4,33 @@ Result: one permanent link (e.g. `https://attendance-xxxx.onrender.com`) that
 works without any laptop running. Attendance can still only be marked from the
 **office Wi-Fi**. Data lives in a permanent cloud Postgres database.
 
+Hosting = **Render** (free, doesn't expire — just sleeps when idle).
+Database = **Supabase** (free Postgres, does NOT expire). Keeping the database
+off Render avoids Render's time-limited free database.
+
 ## One-time setup
 
 1. **Push the code to GitHub** (already done — repo: `MEDISETTYSAI/Attendance`).
 
-2. **Create a Render account** — https://render.com (sign in with GitHub, free).
+2. **Create the database on Supabase** — https://supabase.com (free, GitHub login):
+   - New project → choose any name + a strong database password → wait ~2 min.
+   - **Connect** (top bar) → **Session pooler** → copy the URI. It looks like:
+     `postgresql://postgres.xxxx:PASSWORD@aws-0-region.pooler.supabase.com:5432/postgres`
+   - Put your real database password where it says `PASSWORD`.
+   - (No need to create tables — the app creates them automatically.)
 
-3. **New → Blueprint** → select this repo. Render reads `render.yaml` and creates
-   both the **web service** and a **free Postgres database**, already linked.
+3. **Create a Render account** — https://render.com (sign in with GitHub, free).
 
-4. When prompted, set the two values marked "sync: false":
+4. **New → Blueprint** → select this repo. Render reads `render.yaml`.
+
+5. When prompted, set the values marked "sync: false":
+   - `DATABASE_URL` → paste the Supabase URI from step 2.
    - `ADMIN_PASSWORD` → choose your own admin password.
-   - `OFFICE_NETWORKS` → leave blank for now; you'll fill it in step 6.
+   - `OFFICE_NETWORKS` → leave blank for now; fill it in step 7.
 
-5. Click **Apply / Deploy** and wait for it to go live.
+6. Click **Apply / Deploy** and wait for it to go live.
 
-6. **Whitelist your office Wi-Fi (important):**
+7. **Whitelist your office Wi-Fi (important):**
    - On a device connected to the **office Wi-Fi**, open
      `https://<your-app>.onrender.com/whoami`
    - Copy the `your_ip` value (this is your office's public IP).
@@ -40,8 +51,10 @@ Done. Share `https://<your-app>.onrender.com/employees` with staff.
 - The office **public IP can change** if your ISP is dynamic. If marking suddenly
   fails for everyone, re-check `/whoami` and update `OFFICE_NETWORKS`. You can
   list several: `OFFICE_NETWORKS=1.2.3.4,5.6.7.8`.
-- Render's **free Postgres expires after 90 days** — before then, upgrade the DB
-  or export your data. (Supabase is a free alternative with no expiry.)
+- **Supabase** free tier pauses a project after ~1 week of *zero* activity; the
+  data stays and any visit wakes it. Daily office use keeps it always awake.
+- Your attendance data is permanent — it lives in Supabase, not on Render's
+  temporary disk.
 
 ## Running locally (unchanged)
 
