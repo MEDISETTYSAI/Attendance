@@ -38,7 +38,8 @@ def export_month(year=None, month=None):
     summary["A3"].font = Font(bold=True)
     summary["B3"].font = Font(bold=True)
 
-    # ---- One sheet per day ----
+    # ---- One sheet per day (and count days present per employee) ----
+    days_present = {}  # employee_id -> number of days present this month
     for d in days:
         rows = get_attendance_list("employee", d)
         summary.append([d, len(rows)])
@@ -48,7 +49,23 @@ def export_month(year=None, month=None):
         for c in ws[1]:
             c.font = Font(bold=True)
         for row in rows:
-            ws.append([row[0], "Employee", row[1], row[2], row[3], row[4]])
+            emp_id = row[0]
+            days_present[emp_id] = days_present.get(emp_id, 0) + 1
+            ws.append([emp_id, "Employee", row[1], row[2], row[3], row[4]])
+
+    # ---- Employee Totals sheet (placed as the 2nd tab) ----
+    working_days = len(days)
+    totals = wb.create_sheet(title="Employee Totals", index=1)
+    totals["A1"] = f"Per-Employee Totals - {ym}"
+    totals["A1"].font = Font(bold=True, size=14)
+    totals.append([])
+    totals.append(["Employee ID", "Days Present", "Working Days", "Attendance %"])
+    for c in totals[3]:
+        c.font = Font(bold=True)
+    for emp_id in sorted(days_present):
+        present = days_present[emp_id]
+        pct = round(present / working_days * 100) if working_days else 0
+        totals.append([emp_id, present, working_days, f"{pct}%"])
 
     wb.save(EXCEL_PATH)
     print(f"[export] Monthly workbook updated: {EXCEL_PATH}")
