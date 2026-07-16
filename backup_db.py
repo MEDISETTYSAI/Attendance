@@ -19,7 +19,7 @@ import sqlite3
 from pathlib import Path
 from datetime import date
 
-from database import DB_PATH
+from database import DB_PATH, USE_POSTGRES
 
 BASE_DIR = Path(__file__).resolve().parent
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", BASE_DIR / "backups"))
@@ -30,6 +30,11 @@ KEEP_DAYS = int(os.environ.get("BACKUP_KEEP_DAYS", "30"))
 
 def backup_database():
     """Create today's backup and prune old ones. Returns the backup path."""
+    if USE_POSTGRES:
+        # On the cloud, the managed Postgres provider keeps its own backups.
+        print("[backup] Cloud Postgres in use; provider handles backups. Skipping file backup.")
+        return None
+
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
     if not Path(DB_PATH).exists():

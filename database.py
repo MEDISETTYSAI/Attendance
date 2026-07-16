@@ -5,43 +5,65 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Where the single attendance database lives.
-#   Default  -> your_database.db next to the code (one laptop only).
-#   Shared   -> set ATTENDANCE_DB to a OneDrive / shared-network folder so
-#               EVERY laptop that runs the app reads & writes the SAME file,
-#               e.g.  ATTENDANCE_DB=C:\Users\yuva\OneDrive\OfficeAttendance\your_database.db
-DB_PATH = Path(os.environ.get("ATTENDANCE_DB", BASE_DIR / "your_database.db"))
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+# When DATABASE_URL is present (e.g. Render Postgres) we use Postgres so data
+# is PERMANENT in the cloud. Otherwise we fall back to a local SQLite file,
+# which keeps local development simple.
+DATABASE_URL = os.environ.get("DATABASE_URL")
+USE_POSTGRES = bool(DATABASE_URL)
 
 # One-device-per-day rule.
 #   On-premise (each device has its own private LAN IP) -> safe to enable ("1").
-#   Cloud deploy (ALL office devices share the office's single public IP)
-#       -> MUST stay off ("0"), otherwise only the first employee could mark.
+#   Cloud / shared office Wi-Fi (everyone shares one public IP) -> keep off.
 ENFORCE_ONE_PER_IP = os.environ.get("ENFORCE_ONE_PER_IP", "0") == "1"
+
+if USE_POSTGRES:
+    import psycopg2  # only needed/installed on the cloud
+    DB_PATH = DATABASE_URL  # for reference/logging only
+else:
+    # Local SQLite file. Point ATTENDANCE_DB at a shared/OneDrive folder to
+    # share one database across laptops.
+    DB_PATH = Path(os.environ.get("ATTENDANCE_DB", BASE_DIR / "your_database.db"))
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _connect():
+    if USE_POSTGRES:
+        return psycopg2.connect(DATABASE_URL)
+    return sqlite3.connect(DB_PATH)
+
+
+def _q(sql):
+    """SQLite uses ? placeholders; Postgres uses %s."""
+    return sql.replace("?", "%s") if USE_POSTGRES else sql
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     cursor = conn.cursor()
 
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS employee_attendance (
-        user_id TEXT,
-        timestamp TEXT,
-        lat REAL,
-        lon REAL,
-        address TEXT,
-        ip_address TEXT
-    )
+        CREATE TABLE IF NOT EXISTS employee_attendance (
+            user_id TEXT,
+            timestamp TEXT,
+            day TEXT,
+            lat REAL,
+            lon REAL,
+            address TEXT,
+            ip_address TEXT
+        )
     """)
+
+    # Ensure the 'day' column exists on older databases.
+    if USE_POSTGRES:
+        cursor.execute("ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS day TEXT")
+    else:
+        cols = [r[1] for r in cursor.execute("PRAGMA table_info(employee_attendance)").fetchall()]
+        if "day" not in cols:
+            cursor.execute("ALTER TABLE employee_attendance ADD COLUMN day TEXT")
+            cursor.execute("UPDATE employee_attendance SET day = substr(timestamp,1,10) WHERE day IS NULL")
 
     conn.commit()
     return conn
-
-
-def _table_for(role):
-    # Every role currently maps to employees; kept as a hook for future roles.
-    return "employee_attendance"
 
 
 # ----------------------------------
@@ -54,43 +76,30 @@ def mark_attendance(user_id, role="employee", lat=None, lon=None, address=None, 
     today = date.today().isoformat()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    table = _table_for(role)
-
     # ❌ Rule 1: Same employee cannot mark twice in one day
-    cursor.execute(f"""
-        SELECT 1 FROM {table}
-        WHERE user_id = ?
-        AND DATE(timestamp) = ?
-    """, (user_id, today))
-
+    cursor.execute(_q("SELECT 1 FROM employee_attendance WHERE user_id = ? AND day = ?"),
+                   (user_id, today))
     if cursor.fetchone():
         conn.close()
         return "USER_ALREADY"
 
     # ❌ Rule 2 (optional): Same device/IP cannot mark twice in one day.
-    # Disabled by default because a shared office Wi-Fi presents one public IP
-    # for everyone. Enable only when the server runs on the office LAN.
     if ENFORCE_ONE_PER_IP and ip_address:
-        cursor.execute(f"""
-            SELECT 1 FROM {table}
-            WHERE ip_address = ?
-            AND DATE(timestamp) = ?
-        """, (ip_address, today))
-
+        cursor.execute(_q("SELECT 1 FROM employee_attendance WHERE ip_address = ? AND day = ?"),
+                       (ip_address, today))
         if cursor.fetchone():
             conn.close()
             return "IP_BLOCKED"
 
     # ✅ Insert attendance
-    cursor.execute(f"""
-        INSERT INTO {table}
-        (user_id, timestamp, lat, lon, address, ip_address)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, now, lat, lon, address, ip_address))
+    cursor.execute(_q("""
+        INSERT INTO employee_attendance
+        (user_id, timestamp, day, lat, lon, address, ip_address)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """), (user_id, now, today, lat, lon, address, ip_address))
 
     conn.commit()
     conn.close()
-
     return "SUCCESS"
 
 
@@ -101,19 +110,17 @@ def get_attendance_list(role="employee", day=None):
     conn = get_connection()
     cursor = conn.cursor()
 
-    table = _table_for(role)
-
     if day:
-        cursor.execute(f"""
+        cursor.execute(_q("""
             SELECT user_id, timestamp, lat, lon, address
-            FROM {table}
-            WHERE DATE(timestamp) = ?
+            FROM employee_attendance
+            WHERE day = ?
             ORDER BY timestamp DESC
-        """, (day,))
+        """), (day,))
     else:
-        cursor.execute(f"""
+        cursor.execute("""
             SELECT user_id, timestamp, lat, lon, address
-            FROM {table}
+            FROM employee_attendance
             ORDER BY timestamp DESC
         """)
 
